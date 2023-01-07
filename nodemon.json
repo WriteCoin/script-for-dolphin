@@ -1,0 +1,4 @@
+{
+    "verbose": true,
+    "ignore": ["*.test.js", "config/default.json"]
+}
