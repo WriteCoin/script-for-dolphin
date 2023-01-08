@@ -10,8 +10,6 @@ const delay = (ms) => {
     return new Promise((r) => setTimeout(() => r(), ms))
 }
 
-const isNull = (v) => typeof v === null || typeof v === undefined
-
 module.exports = new (class API {
     constructor() {
         this.profiles = new Map()
@@ -287,33 +285,43 @@ module.exports = new (class API {
         }
     }
 
-    searchMatch = (page, selector) => {
-        return page.evaluate((selector) => {
-            // console.log(selector)
-            let allElements = document.querySelectorAll("*")
-            let filteredElements = []
-            let resultElement
-            for (let i = 0; i < allElements.length; i++) {
-                let el = allElements[i]
-                if (
-                    el.childElementCount === 0 &&
-                    el.tagName !== "STYLE" &&
-                    el.tagName !== "SCRIPT" &&
-                    el.tagName !== "META" &&
-                    el.tagName !== "LINK" &&
-                    el.tagName !== "NOSCRIPT" &&
-                    el.tagName !== "TITLE"
-                ) {
-                    filteredElements.push(el)
-                }
-            }
-            for (let i = 0; i < filteredElements.length; i++) {
-                let el = filteredElements[i]
-                let markup = new XMLSerializer().serializeToString(el)
+    searchMatch = async (ground, selector) => {
+        let allElements = await ground.$$("*")
+        let resultElements = []
+        for (let i = 0; i < allElements.length; i++) {
+            let el = allElements[i]
+            let childElementCount = await ground.evaluateHandle(
+                (el) => el.childElementCount,
+                el
+            )
+            let tagName = await ground.evaluateHandle((el) => el.tagName, el)
+            childElementCount = await childElementCount.jsonValue()
+            tagName = await tagName.jsonValue()
+            if (
+                childElementCount === 0 &&
+                tagName !== "STYLE" &&
+                tagName !== "SCRIPT" &&
+                tagName !== "META" &&
+                tagName !== "LINK" &&
+                tagName !== "NOSCRIPT" &&
+                tagName !== "TITLE"
+            ) {
+                let markup = await ground.evaluateHandle(
+                    (el) => el.outerHTML,
+                    el
+                )
+                markup = await markup.jsonValue()
                 let cond = markup.includes(selector)
                 while (!cond) {
-                    el = el.parentElement
-                    markup = new XMLSerializer().serializeToString(el)
+                    el = await ground.evaluateHandle(
+                        (el) => el.parentElement,
+                        el
+                    )
+                    markup = await ground.evaluateHandle(
+                        (el) => el.outerHTML,
+                        el
+                    )
+                    markup = await markup.jsonValue()
                     cond = markup.includes(selector)
                     if (
                         el.tagName === "BODY" ||
@@ -326,97 +334,54 @@ module.exports = new (class API {
                     }
                 }
                 if (cond) {
-                    resultElement = el
-                    break
+                    resultElements.push(el)
                 }
             }
-            return resultElement
-        }, selector)
+        }
+        return resultElements
     }
 
-    getSelector = async (page, pageId, selector, selectorType) => {
-        // console.log('Получение селектора')
-        // let page = await this._getPageById(browserId, pageId)
-        if (typeof selectorType === "string") {
-            selectorType = selectorType.toLowerCase()
-        } else {
-            selectorType = "css"
-        }
+    findBySelector = async (ground, selector, selectorType = "css") => {
+        selectorType = selectorType.toLowerCase()
+        console.log(
+            "Поиск элементов по селектору",
+            selector,
+            "тип",
+            selectorType
+        )
         let sel
-        if (selectorType === "css" || selectorType === "xpath") {
-            // return this.compileResult(true, { selector: selector })
-            console.log("Поиск селектора css или xpath")
-            sel = await page.$x(selector)
-            if (sel.length === 0) {
-                throw `Элемента с селектором ${selector} на странице с индексом ${pageId} не существует`
-            }
-            sel = sel[0]
+        if (selectorType === "css") {
+            console.log("Поиск селектора css")
+            sel = await ground.$$(selector)
+            sel = sel.length === 0 ? null : sel
+        } else if (selectorType === "xpath") {
+            console.log("Поиск селектора по xpath")
+            sel = await ground.$x(selector)
+            sel = sel.length === 0 ? null : sel
         } else if (selectorType === "match" || selectorType === "text") {
-            sel = await page.evaluate((selector) => {
-                // console.log(selector)
-                let allElements = document.querySelectorAll("*")
-                let filteredElements = []
-                let resultElement
-                for (let i = 0; i < allElements.length; i++) {
-                    let el = allElements[i]
-                    if (
-                        el.childElementCount === 0 &&
-                        el.tagName !== "STYLE" &&
-                        el.tagName !== "SCRIPT" &&
-                        el.tagName !== "META" &&
-                        el.tagName !== "LINK" &&
-                        el.tagName !== "NOSCRIPT" &&
-                        el.tagName !== "TITLE"
-                    ) {
-                        filteredElements.push(el)
-                    }
-                }
-                for (let i = 0; i < filteredElements.length; i++) {
-                    let el = filteredElements[i]
-                    let markup = new XMLSerializer().serializeToString(el)
-                    let cond = markup.includes(selector)
-                    while (!cond) {
-                        el = el.parentElement
-                        markup = new XMLSerializer().serializeToString(el)
-                        cond = markup.includes(selector)
-                        if (
-                            el.tagName === "BODY" ||
-                            el.tagName === "HEAD" ||
-                            el.tagName === "DIV" ||
-                            el.tagName === "UL"
-                        ) {
-                            cond = false
-                            break
-                        }
-                    }
-                    if (cond) {
-                        resultElement = el
-                        break
-                    }
-                }
-                return resultElement
-            }, selector)
-        } else {
-            sel = selector
+            console.log("Поиск селектора по match")
+            sel = await this.searchMatch(ground, selector)
         }
-        // console.log('Селектор', sel)
         return sel
+    }
+
+    parseBASSelector = (selector) => {
+        let opts = selector.match(/\[[^\]\[]*\]/gm)
+        console.log(opts)
+    }
+
+    findByBASSelector = async (ground, selector) => {
+        console.log('Поиск элементов по селектору в BAS формате', selector)
+
     }
 
     isElementExists = async (browserId, pageId, selector, selectorType) => {
         try {
-            // let browserInfo = this.getBrowserInfo(browserId)
-            let page = await this._getPageById(browserId, pageId)
-            // const elements = await page.$x(selector)
-            // console.log("Проверка существования элемента")
-            const element = await this.getSelector(
-                page,
-                pageId,
-                selector,
-                selectorType
-            )
+            console.log("Проверка существования элемента")
 
-            // console.log("Элемент", element)
+            let page = await this._getPageById(browserId, pageId)
+
+            const element = await this.findBySelector(page, selector, selectorType)
 
             return this.compileResult(true, { isExists: !!element })
         } catch (err) {
@@ -429,30 +394,32 @@ module.exports = new (class API {
         browserId,
         pageId,
         selector,
-        selectorType,
+        selectorType = 'css',
         mouseButton = "left",
         clickCount = 1,
         delay = 100
     ) => {
         try {
+            console.log("Клик по элементу")
             let page = await this._getPageById(browserId, pageId)
-            let sel = await this.getSelector(
+            let sel = await this.findBySelector(
                 page,
-                pageId,
                 selector,
                 selectorType
             )
+            let el = sel[0]
             let opt = {
                 delay: parseInt(delay),
                 button: mouseButton,
                 clickCount: parseInt(clickCount),
             }
 
-            if (typeof sel === "string") {
-                await page.click(sel, opt)
-            } else {
-                await sel.click(opt)
+            if (!el) {
+                throw `Элемент с селектором ${selector} на странице ${pageId} браузера ${browserId} не существует.`
             }
+
+            await el.click(opt)
+
             return this.compileResult(true, "OK")
         } catch (err) {
             return this.compileResult(false, err || err.stack)
@@ -463,7 +430,7 @@ module.exports = new (class API {
         browserId,
         pageId,
         selector,
-        selectorType,
+        selectorType = "css",
         waitForSelector = 30000,
         moveDelay = 2000,
         maxTries = 10,
@@ -475,42 +442,15 @@ module.exports = new (class API {
         try {
             console.log("Двинуть мышь и кликнуть на элемент")
             let page = await this._getPageById(browserId, pageId)
-            // let sel = await this.getSelector(
-            //     page,
-            //     pageId,
-            //     selector,
-            //     selectorType
-            // )
-            // return this.compileResult(true, { sel: sel })
 
-            if (typeof selectorType === "string") {
-                selectorType = selectorType.toLowerCase()
-            } else {
-                selectorType = "css"
-            }
-            let sel
-            // if (selectorType === "css" || selectorType === "xpath") {
-            //     // return this.compileResult(true, { selector: selector })
-            //     sel = await page.$x(selector)
-            //     return this.compileResult(true, "STOP")
-            //     if (sel.length === 0) {
-            //         throw `Элемента с селектором ${selector} на странице с индексом ${pageId} не существует`
-            //     }
-            //     sel = sel[0]
-            // } else if (selectorType === "match" || selectorType === "text") {
-            //     sel = await this.searchMatch(page, selector)
-            // } else {
-            //     sel = selector
-            // }
-            if (selectorType === "match" || selectorType === "text") {
-                sel = await this.searchMatch(page, selector)
-            } else {
-                sel = selector
-            }
-            console.log("Селектор", sel)
+            let sel = await this.findBySelector(page, selector, selectorType)
 
-            // console.log(sel)
-            // const cursor = this.cursors.get(pageId)
+            let el = sel[0]
+
+            if (!el) {
+                throw `Элемент с селектором ${selector} на странице ${pageId} браузера ${browserId} не существует.`
+            }
+
             const cursor = createCursor(page)
 
             const moveOpt = {}
@@ -523,14 +463,9 @@ module.exports = new (class API {
             if (maxTries) {
                 moveOpt.maxTries = maxTries
             }
-            if (moveSpeed !== 0 || moveSpeed) {
+            if (moveSpeed !== 0 && moveSpeed) {
                 moveOpt.moveSpeed = moveSpeed
             }
-
-            // return this.compileResult(true, { cursor: cursor })
-
-            // const csr = createCursor(page)
-            // csr.move
 
             await cursor.move(selector, moveOpt)
 
@@ -540,11 +475,8 @@ module.exports = new (class API {
                 clickCount: parseInt(clickCount),
             }
 
-            if (typeof sel === "string") {
-                await page.click(sel, clickOpt)
-            } else {
-                await sel.click(clickOpt)
-            }
+            await el.click(clickOpt)
+            
             return this.compileResult(true, "OK")
         } catch (err) {
             return this.compileResult(false, { error: err || stack })
@@ -555,18 +487,24 @@ module.exports = new (class API {
         browserId,
         pageId,
         selector,
-        selectorType,
         text,
+        selectorType = 'css',
         delay = 100
     ) => {
         try {
+            console.log('Ввод текста в элемент')
             let page = await this._getPageById(browserId, pageId)
-            let sel = await this.getSelector(
+            let sel = await this.findBySelector(
                 page,
-                pageId,
                 selector,
                 selectorType
             )
+
+            let el = sel[0]
+
+            if (!el) {
+                throw `Элемент с селектором ${selector} на странице ${pageId} браузера ${browserId} не существует.`
+            }
 
             let textData = text
             let pressKeys = []
@@ -576,11 +514,8 @@ module.exports = new (class API {
                 pressKeys = inputParams[1].split(",")
             }
             let opt = { delay }
-            if (typeof sel === "string") {
-                await page.click(selector, opt)
-            } else {
-                await sel.click(opt)
-            }
+            
+            await el.click(opt)
 
             if (textData.length > 0)
                 await page.keyboard.type(textData, { delay: parseInt(delay) })
