@@ -144,3 +144,8 @@ app.get("/pageEvalCode", async (req, res) => {
     )
     res.send(result)
 })
+
+app.get('/test', async (req, res) => {
+    let result = await API.test(req.query.browserId, req.query.pageId)
+    res.send(result)
+})

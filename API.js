@@ -3,11 +3,79 @@ const axios = require("axios")
 const nodeConfig = require("./config")
 const { createCursor } = require("ghost-cursor")
 const { getConfig, setValue } = require("./controller")
+const replaceAll = require("string.prototype.replaceall")
 
 process.env["NODE_TLS_REJECT_UNAUTHORIZED"] = 0 // for sniffer
 
 const delay = (ms) => {
     return new Promise((r) => setTimeout(() => r(), ms))
+}
+
+let isNull = (v) => typeof v === "undefined" || v === null
+
+let splitOutsideLimitChars = (str, splitter, limitChars) => {
+    let entriesOutside = []
+    let entriesInside = []
+    let isEntryInside = false
+    let currentLimitCharIndex
+    for (let i = 0; i < str.length; i++) {
+        let c = str[i]
+        if (isEntryInside) {
+            entriesInside[entriesInside.length - 1] += c
+            let limitChar = limitChars[currentLimitCharIndex]
+            limitChar = typeof limitChar === "string" ? limitChar : limitChar[1]
+            isEntryInside = c !== limitChar
+            if (!isEntryInside) {
+                entriesOutside.push("")
+            }
+        } else {
+            isEntryInside = limitChars.some((limitChar, limitCharIndex) => {
+                limitChar =
+                    typeof limitChar === "string" ? limitChar : limitChar[0]
+                let isLimitChar = c === limitChar
+                if (isLimitChar) {
+                    currentLimitCharIndex = limitCharIndex
+                }
+                return isLimitChar
+            })
+            if (isEntryInside) {
+                entriesInside.push("")
+                entriesInside[entriesInside.length - 1] = c
+                continue
+            }
+            if (isNull(entriesOutside[entriesOutside.length - 1])) {
+                entriesOutside.push("")
+            }
+            entriesOutside[entriesOutside.length - 1] += c
+        }
+    }
+    let resultEntries = []
+    let isEntrySplitted = false
+    entriesOutside.forEach((outsideEntry, outsideEntryIndex) => {
+        let outsideSplit = outsideEntry.split(splitter)
+        if (outsideEntry !== outsideSplit[0]) {
+            outsideSplit.forEach((entry, i) => {
+                if (entry !== '') {
+                    if (!isEntrySplitted && i === 0) {
+                        resultEntries[resultEntries.length - 1] += entry
+                    } else {
+                        resultEntries.push(entry)
+                    }
+                }
+            })
+            isEntrySplitted = true
+        } else {
+            if (isNull(resultEntries[resultEntries.length - 1])) {
+                resultEntries.push('')
+            }
+            resultEntries[resultEntries.length - 1] += outsideEntry
+            isEntrySplitted = false
+        }
+        if (entriesInside[outsideEntryIndex]) {
+            resultEntries[resultEntries.length - 1] += entriesInside[outsideEntryIndex]
+        }
+    })
+    return resultEntries
 }
 
 module.exports = new (class API {
@@ -367,12 +435,36 @@ module.exports = new (class API {
 
     parseBASSelector = (selector) => {
         let opts = selector.match(/\[[^\]\[]*\]/gm)
-        console.log(opts)
+
+        let selectorForPosis = selector
+        let selectors = []
+        let func = (opt) => {
+            let pos = selectorForPosis.indexOf(opt)
+            let selectorWithOpt = selectorForPosis
+            selectorForPosis =
+                selectorForPosis.substr(0, pos) +
+                selectorForPosis.substr(pos + opt.length)
+            let sels = selectorForPosis.split('>FRAME>')
+            let selsWithOpt = selectorWithOpt.split('>FRAME>')
+            let sel = sels[0]
+            if (pos <= sel.length) {
+                sel = sel.substr(0, pos) + opt + sel.substr(pos + opt.length)
+            } else {
+                selectorForPosis = selsWithOpt.slice(1).join('>FRAME>')
+                func(opt)
+                return
+            }
+            selectors.push(sel)
+        }
+        opts.forEach(func)
+        selectorForPosis.split('>FRAME>').slice(1).forEach(sel => {
+            selectors.push(sel)
+        })
+        return selectors
     }
 
     findByBASSelector = async (ground, selector) => {
-        console.log('Поиск элементов по селектору в BAS формате', selector)
-
+        console.log("Поиск элементов по селектору в BAS формате", selector)
     }
 
     isElementExists = async (browserId, pageId, selector, selectorType) => {
@@ -381,7 +473,11 @@ module.exports = new (class API {
 
             let page = await this._getPageById(browserId, pageId)
 
-            const element = await this.findBySelector(page, selector, selectorType)
+            const element = await this.findBySelector(
+                page,
+                selector,
+                selectorType
+            )
 
             return this.compileResult(true, { isExists: !!element })
         } catch (err) {
@@ -394,7 +490,7 @@ module.exports = new (class API {
         browserId,
         pageId,
         selector,
-        selectorType = 'css',
+        selectorType = "css",
         mouseButton = "left",
         clickCount = 1,
         delay = 100
@@ -402,11 +498,7 @@ module.exports = new (class API {
         try {
             console.log("Клик по элементу")
             let page = await this._getPageById(browserId, pageId)
-            let sel = await this.findBySelector(
-                page,
-                selector,
-                selectorType
-            )
+            let sel = await this.findBySelector(page, selector, selectorType)
             let el = sel[0]
             let opt = {
                 delay: parseInt(delay),
@@ -476,7 +568,7 @@ module.exports = new (class API {
             }
 
             await el.click(clickOpt)
-            
+
             return this.compileResult(true, "OK")
         } catch (err) {
             return this.compileResult(false, { error: err || stack })
@@ -488,17 +580,13 @@ module.exports = new (class API {
         pageId,
         selector,
         text,
-        selectorType = 'css',
+        selectorType = "css",
         delay = 100
     ) => {
         try {
-            console.log('Ввод текста в элемент')
+            console.log("Ввод текста в элемент")
             let page = await this._getPageById(browserId, pageId)
-            let sel = await this.findBySelector(
-                page,
-                selector,
-                selectorType
-            )
+            let sel = await this.findBySelector(page, selector, selectorType)
 
             let el = sel[0]
 
@@ -514,7 +602,7 @@ module.exports = new (class API {
                 pressKeys = inputParams[1].split(",")
             }
             let opt = { delay }
-            
+
             await el.click(opt)
 
             if (textData.length > 0)
@@ -586,6 +674,22 @@ module.exports = new (class API {
             let page = await this._getPageById(browserId, pageId)
             let evalResult = await this._waitEval(page, code) // 'let page = ' + page + '; ' +
             return this.compileResult(true, { evalResult: evalResult })
+        } catch (err) {
+            return this.compileResult(false, err || err.stack)
+        }
+    }
+
+    test = async (browserId, pageId) => {
+        try {
+            console.log("Тест")
+            let page = await this._getPageById(browserId, pageId)
+
+            // let sel = ">CSS>#google_ads_iframe_1[ >FRAME>]>FRAME>>CSS>a[abc]"
+            let sel = ">CSS>#google_ads_iframe_1[ >FRAME>]>FRAME>>CSS>a[abc]>FRAME>p"
+
+            this.parseBASSelector(sel)
+
+            return this.compileResult(true, "OK")
         } catch (err) {
             return this.compileResult(false, err || err.stack)
         }
