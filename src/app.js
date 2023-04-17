@@ -1,10 +1,9 @@
 // const API = require("../anty")
-const API = require("./API")
-const express = require("express")
-const app = express()
-const { PORT } = require("./config")
-
-
+// const API = require("./API")
+let API = require('./API_playwright')
+let express = require("express")
+let app = express()
+let { PORT } = require("../config/config")
 
 app.listen(PORT, () => {
     console.log("node server launched")

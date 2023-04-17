@@ -1,4 +1,4 @@
-let nodeConfig = require("./config")
+let nodeConfig = require("../config/config")
 const jsonConfig = require("config")
 const fs = require("fs")
 
@@ -8,7 +8,9 @@ const isBAS =
 const jsonConfigPath = "config/default.json"
 
 const getConfig = (isRAM = false) =>
-    isBAS || isRAM ? nodeConfig : JSON.parse(fs.readFileSync(jsonConfigPath, "utf-8"))
+    isBAS || isRAM
+        ? nodeConfig
+        : JSON.parse(fs.readFileSync(jsonConfigPath, "utf-8"))
 
 const setConfig = (obj, isRAM = false) => {
     if (isBAS || isRAM) {

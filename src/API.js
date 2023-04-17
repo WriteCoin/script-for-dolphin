@@ -1,6 +1,6 @@
 const puppeteer = require("puppeteer-core")
 const axios = require("axios")
-const nodeConfig = require("./config")
+const nodeConfig = require("../config/config")
 const { createCursor } = require("ghost-cursor")
 const { getConfig, setValue } = require("./controller")
 const replaceAll = require("string.prototype.replaceall")
@@ -55,8 +55,11 @@ let splitOutsideLimitChars = (str, splitter, limitChars) => {
         let outsideSplit = outsideEntry.split(splitter)
         if (outsideEntry !== outsideSplit[0]) {
             outsideSplit.forEach((entry, i) => {
-                if (entry !== '') {
+                if (entry !== "") {
                     if (!isEntrySplitted && i === 0) {
+                        if (isNull(resultEntries[resultEntries.length - 1])) {
+                            resultEntries.push("")
+                        }
                         resultEntries[resultEntries.length - 1] += entry
                     } else {
                         resultEntries.push(entry)
@@ -66,13 +69,14 @@ let splitOutsideLimitChars = (str, splitter, limitChars) => {
             isEntrySplitted = true
         } else {
             if (isNull(resultEntries[resultEntries.length - 1])) {
-                resultEntries.push('')
+                resultEntries.push("")
             }
             resultEntries[resultEntries.length - 1] += outsideEntry
             isEntrySplitted = false
         }
         if (entriesInside[outsideEntryIndex]) {
-            resultEntries[resultEntries.length - 1] += entriesInside[outsideEntryIndex]
+            resultEntries[resultEntries.length - 1] +=
+                entriesInside[outsideEntryIndex]
         }
     })
     return resultEntries
@@ -140,6 +144,7 @@ module.exports = new (class API {
             }
         } else {
             browserInfo = cfgRAM.instances[key]
+            console.log(browserInfo)
         }
 
         if (browserInfo === null) throw `browser id ${browserId} not found`
@@ -289,6 +294,11 @@ module.exports = new (class API {
             )
             if (page == null) page = await browserInfo["browser"].newPage()
 
+            await page.setExtraHTTPHeaders({
+                "--disable-web-security": '',
+                "--disable-features": 'IsolateOrigins,site-per-process'
+            })
+
             try {
                 await page.goto(url, opts)
             } catch (err) {
@@ -434,52 +444,76 @@ module.exports = new (class API {
     }
 
     parseBASSelector = (selector) => {
-        let opts = selector.match(/\[[^\]\[]*\]/gm)
-
-        let selectorForPosis = selector
+        let selectorEntries = splitOutsideLimitChars(selector, ">FRAME>", [
+            ["[", "]"],
+            '"',
+            "'",
+        ])
+        console.log("selectorEntries", selectorEntries)
+        let regExp = /^\s*>(CSS|XPATH|MATCH)>/gm
         let selectors = []
-        let func = (opt) => {
-            let pos = selectorForPosis.indexOf(opt)
-            let selectorWithOpt = selectorForPosis
-            selectorForPosis =
-                selectorForPosis.substr(0, pos) +
-                selectorForPosis.substr(pos + opt.length)
-            let sels = selectorForPosis.split('>FRAME>')
-            let selsWithOpt = selectorWithOpt.split('>FRAME>')
-            let sel = sels[0]
-            if (pos <= sel.length) {
-                sel = sel.substr(0, pos) + opt + sel.substr(pos + opt.length)
+        selectorEntries.forEach((entry) => {
+            let match = entry.match(regExp)
+            if (match) {
+                let selectorHeader = match[0]
+                entry = entry.replace(selectorHeader, "")
+                selectorHeader = selectorHeader.replaceAll(">", "")
+                selectorHeader = selectorHeader.replaceAll(/\s/gm, "")
+                selectors.push({ selector: entry, type: selectorHeader })
+                return entry
             } else {
-                selectorForPosis = selsWithOpt.slice(1).join('>FRAME>')
-                func(opt)
-                return
+                throw "Селектор в формате BAS должен начинаться с любого из выражений: >CSS>, >XPATH>, >MATCH>"
             }
-            selectors.push(sel)
-        }
-        opts.forEach(func)
-        selectorForPosis.split('>FRAME>').slice(1).forEach(sel => {
-            selectors.push(sel)
         })
         return selectors
     }
 
     findByBASSelector = async (ground, selector) => {
-        console.log("Поиск элементов по селектору в BAS формате", selector)
+        let selectors = this.parseBASSelector(selector)
+        console.log("BAS selectors", selectors)
+        let frame = ground
+        for (let i = 0; i < selectors.length - 1; i++) {
+            let selector = selectors[i]
+            let elements = await this.findBySelector(
+                frame,
+                selector.selector,
+                selector.type
+            )
+            frame = await elements[0].frame
+            console.log("Промежуточный фрейм", frame)
+        }
+        selector = selectors[selectors.length - 1]
+        let resultElements = await this.findBySelector(
+            frame,
+            selector.selector,
+            selector.type
+        )
+        console.log("resultElements", resultElements)
+        return resultElements
     }
 
-    isElementExists = async (browserId, pageId, selector, selectorType) => {
+    isElementExists = async (
+        browserId,
+        pageId,
+        selector,
+        selectorType = undefined
+    ) => {
         try {
-            console.log("Проверка существования элемента")
+            if (selectorType) {
+                console.log("Проверка существования элемента")
+            } else {
+                console.log(
+                    "Проверка существования элемента с селектором в формате BAS"
+                )
+            }
 
             let page = await this._getPageById(browserId, pageId)
 
-            const element = await this.findBySelector(
-                page,
-                selector,
-                selectorType
-            )
+            let elements = selectorType
+                ? await this.findBySelector(page, selector, selectorType)
+                : await this.findByBASSelector(page, selector)
 
-            return this.compileResult(true, { isExists: !!element })
+            return this.compileResult(true, { isExists: elements.length > 0 })
         } catch (err) {
             return this.compileResult(false, err || err.stack)
         }
@@ -490,27 +524,33 @@ module.exports = new (class API {
         browserId,
         pageId,
         selector,
-        selectorType = "css",
+        selectorType = undefined,
         mouseButton = "left",
         clickCount = 1,
         delay = 100
     ) => {
         try {
-            console.log("Клик по элементу")
+            if (selectorType) {
+                console.log("Клик по элементу")
+            } else {
+                console.log("Клик по элементу с селектором в формате BAS")
+            }
             let page = await this._getPageById(browserId, pageId)
-            let sel = await this.findBySelector(page, selector, selectorType)
-            let el = sel[0]
-            let opt = {
+            let elements = selectorType
+                ? await this.findBySelector(page, selector, selectorType)
+                : await this.findByBASSelector(page, selector)
+            let element = elements[0]
+            let options = {
                 delay: parseInt(delay),
                 button: mouseButton,
                 clickCount: parseInt(clickCount),
             }
 
-            if (!el) {
+            if (!element) {
                 throw `Элемент с селектором ${selector} на странице ${pageId} браузера ${browserId} не существует.`
             }
 
-            await el.click(opt)
+            await element.click(options)
 
             return this.compileResult(true, "OK")
         } catch (err) {
@@ -522,7 +562,7 @@ module.exports = new (class API {
         browserId,
         pageId,
         selector,
-        selectorType = "css",
+        selectorType = undefined,
         waitForSelector = 30000,
         moveDelay = 2000,
         maxTries = 10,
@@ -532,45 +572,70 @@ module.exports = new (class API {
         delay = 100
     ) => {
         try {
-            console.log("Двинуть мышь и кликнуть на элемент")
+            if (selectorType) {
+                console.log("Двинуть мышь и кликнуть на элемент")
+            } else {
+                console.log(
+                    "Двинуть мышь и кликнуть на элемент с селектором в формате BAS"
+                )
+            }
             let page = await this._getPageById(browserId, pageId)
 
-            let sel = await this.findBySelector(page, selector, selectorType)
+            let elements = selectorType
+                ? await this.findBySelector(page, selector, selectorType)
+                : await this.findByBASSelector(page, selector)
 
-            let el = sel[0]
+            // console.log("Найденные элементы", elements)
 
-            if (!el) {
+            let element = elements[0]
+
+            if (!element) {
                 throw `Элемент с селектором ${selector} на странице ${pageId} браузера ${browserId} не существует.`
             }
 
+            // element = !selectorType && element.asElement()
+
+            console.log(element)
+
             const cursor = createCursor(page)
 
-            const moveOpt = {}
+            const moveOptions = {}
             if (waitForSelector) {
-                moveOpt.waitForSelector = waitForSelector
+                moveOptions.waitForSelector = waitForSelector
             }
             if (moveDelay) {
-                moveOpt.moveDelay = moveDelay
+                moveOptions.moveDelay = moveDelay
             }
             if (maxTries) {
-                moveOpt.maxTries = maxTries
+                moveOptions.maxTries = maxTries
             }
             if (moveSpeed !== 0 && moveSpeed) {
-                moveOpt.moveSpeed = moveSpeed
+                moveOptions.moveSpeed = moveSpeed
             }
 
-            await cursor.move(selector, moveOpt)
+            await cursor.move(element, moveOptions)
 
-            let clickOpt = {
+            let clickOptions = {
                 delay: parseInt(delay),
                 button: mouseButton,
                 clickCount: parseInt(clickCount),
             }
 
-            await el.click(clickOpt)
+            let anchor = await element.toElement("a")
+
+            await element.click(clickOptions)
+
+            // try {
+            //     await element.click(clickOptions)
+            // } catch (err) {
+            //     if (err.message === "Node is either not clickable or not an HTMLElement") {
+
+            //     }
+            // }
 
             return this.compileResult(true, "OK")
         } catch (err) {
+            console.log(err.message)
             return this.compileResult(false, { error: err || stack })
         }
     }
@@ -580,17 +645,23 @@ module.exports = new (class API {
         pageId,
         selector,
         text,
-        selectorType = "css",
+        selectorType = undefined,
         delay = 100
     ) => {
         try {
-            console.log("Ввод текста в элемент")
+            if (selectorType) {
+                console.log("Ввод текста в элемент")
+            } else {
+                console.log("Ввод текста в элемент с селектором в формате BAS")
+            }
             let page = await this._getPageById(browserId, pageId)
-            let sel = await this.findBySelector(page, selector, selectorType)
+            let elements = selectorType
+                ? await this.findBySelector(page, selector, selectorType)
+                : await this.findByBASSelector(page, selector)
 
-            let el = sel[0]
+            let element = elements[0]
 
-            if (!el) {
+            if (!element) {
                 throw `Элемент с селектором ${selector} на странице ${pageId} браузера ${browserId} не существует.`
             }
 
@@ -601,9 +672,9 @@ module.exports = new (class API {
                 textData = inputParams[0]
                 pressKeys = inputParams[1].split(",")
             }
-            let opt = { delay }
+            let options = { delay }
 
-            await el.click(opt)
+            await element.click(options)
 
             if (textData.length > 0)
                 await page.keyboard.type(textData, { delay: parseInt(delay) })
@@ -685,9 +756,29 @@ module.exports = new (class API {
             let page = await this._getPageById(browserId, pageId)
 
             // let sel = ">CSS>#google_ads_iframe_1[ >FRAME>]>FRAME>>CSS>a[abc]"
-            let sel = ">CSS>#google_ads_iframe_1[ >FRAME>]>FRAME>>CSS>a[abc]>FRAME>p"
+            // let sel =
+            //     ">CSS>#google_ads_iframe_1[ >FRAME>]>FRAME>>CSS>a[abc]>FRAME>p"
 
-            this.parseBASSelector(sel)
+            // this.parseBASSelector(sel)
+
+            let el = await page.$$("#aswift_1")
+
+            let frame = await el[0].frame
+
+            let anchor = await frame.$$("a")
+
+            // console.log(anchor)
+
+            // await anchor[0].click()
+
+            let markup = await page.evaluate(
+                (el) => el.outerHTML,
+                anchor[0]
+            )
+
+            console.log(markup)
+
+            await el[0].frame.evaluate(btn => btn.click(), anchor[0])
 
             return this.compileResult(true, "OK")
         } catch (err) {

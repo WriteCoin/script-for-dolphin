@@ -1,7 +1,7 @@
 const puppeteer = require("puppeteer")
-const { pageEmulateIdleState } = require("./API")
-const API = require("./API")
-const { TOKEN } = require("./config")
+const { pageEmulateIdleState } = require("../API")
+const API = require("../API")
+const { TOKEN } = require("../config")
 
 const delay = (ms) => {
     return new Promise((r) => setTimeout(() => r(), ms))

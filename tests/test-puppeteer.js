@@ -1,21 +1,17 @@
 const puppeteer = require("puppeteer")
 const { createCursor } = require("ghost-cursor")
 const random = require("random")
-const axios = require('axios')
-const { TOKEN } = require('./config')
+const axios = require("axios")
+const { TOKEN } = require("../config/config")
 
 const delay = (ms) => {
     return new Promise((r) => setTimeout(() => r(), ms))
 }
 
 class Script {
-    getProfiles() {
-        
-    }
+    getProfiles() {}
 
-    async start() {
-
-    }
+    async start() {}
 }
 
 async function getPic() {
@@ -88,7 +84,6 @@ async function start() {
     })
     const page = await browser.newPage()
     await page.goto("https://google.com")
-
 
     // await emulateIdleState(page)
     await testCursor(browser, page)

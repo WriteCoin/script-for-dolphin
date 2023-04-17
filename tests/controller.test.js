@@ -1,5 +1,5 @@
-let nodeConfig = require("./config")
-const { getValue, isBAS, setValue } = require("./controller")
+let nodeConfig = require("../config/config")
+const { getValue, isBAS, setValue } = require("../controller")
 
 // console.log(typeof global.BAS_FUNCTION)
 
